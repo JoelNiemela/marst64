@@ -39,7 +39,38 @@ int real2int(double x)
 
 /*--------------------------------------------------------------------*/
 
+int64_t real2long(double x)
+{     /* converts from real to integer type */
+      x = floor(x + 0.5);
+      if (!((double)INT_MIN <= x && x <= (double)INT_MAX))
+         fault("real number to be converted out of long range");
+      return (int64_t)x;
+}
+
+/*--------------------------------------------------------------------*/
+
 double int2real(int x)
+{     /* converts from integer to real type */
+      return (double)x;
+}
+
+/*--------------------------------------------------------------------*/
+
+int64_t int2long(int x)
+{     /* converts from integer to long type */
+      return (int64_t)x;
+}
+
+/*--------------------------------------------------------------------*/
+
+int long2int(int64_t x)
+{     /* converts from long to integer type */
+      return (int)x;
+}
+
+/*--------------------------------------------------------------------*/
+
+double long2real(int64_t x)
 {     /* converts from integer to real type */
       return (double)x;
 }
@@ -77,12 +108,46 @@ int expi(int i, int j)
 
 /*--------------------------------------------------------------------*/
 
+int64_t expil(int64_t i, int64_t j)
+{     /* rises long base i to long exponent j */
+      int64_t ret;
+      unsigned u;
+      if (j < 0 || (i == 0 && j == 0))
+         fault("expil undefined %d", j);
+      ret = 1;
+      u = j;
+      for (;;)
+      {  if (u & 1) ret *= i;
+         if (u >>= 1) i *= i; else break;
+      }
+      return ret;
+}
+
+/*--------------------------------------------------------------------*/
+
 double expn(double x, int n)
 {     /* rises real base x to integer exponent n */
       double ret;
       unsigned u;
       if (n == 0 && x == 0.0)
          fault("expn undefined " REAL_FMT, x);
+      ret = 1.0;
+      u = (n >= 0 ? n : (x = 1.0 / x, -n));
+      for (;;)
+      {  if (u & 1) ret *= x;
+         if (u >>= 1) x *= x; else break;
+      }
+      return ret;
+}
+
+/*--------------------------------------------------------------------*/
+
+double expnl(double x, int64_t n)
+{     /* rises real base x to integer exponent n */
+      double ret;
+      unsigned u;
+      if (n == 0 && x == 0.0)
+         fault("expnl undefined " REAL_FMT, x);
       ret = 1.0;
       u = (n >= 0 ? n : (x = 1.0 / x, -n));
       for (;;)
@@ -104,6 +169,9 @@ double get_real(struct desc x)
          case 'i':
             val = int2real(x.lval ? *x.u.int_ptr : x.u.int_val);
             break;
+         case 's':
+            val = long2real(x.lval ? *x.u.long_ptr : x.u.long_val);
+            break;
          default:
             fault("evaluation of a real formal parameter not possible b"
                "ecause final actual parameter is not of arithmetic type"
@@ -124,8 +192,34 @@ int get_int(struct desc x)
          case 'i':
             val = (x.lval ? *x.u.int_ptr : x.u.int_val);
             break;
+         case 's':
+            val = long2int(x.lval ? *x.u.long_ptr : x.u.long_val);
+            break;
          default:
             fault("evaluation of an integer formal parameter not possib"
+               "le because final actual parameter is not of arithmetic "
+               "type");
+      }
+      return val;
+}
+
+/*--------------------------------------------------------------------*/
+
+int64_t get_long(struct desc x)
+{     /* returns value of long formal parameter called by name */
+      int64_t val;
+      switch (x.type)
+      {  case 'r':
+            val = real2long(x.lval ? *x.u.real_ptr : x.u.real_val);
+            break;
+         case 'i':
+            val = int2long(x.lval ? *x.u.int_ptr : x.u.int_val);
+            break;
+         case 's':
+            val = (x.lval ? *x.u.long_ptr : x.u.long_val);
+            break;
+         default:
+            fault("evaluation of a long formal parameter not possib"
                "le because final actual parameter is not of arithmetic "
                "type");
       }
@@ -179,6 +273,9 @@ double set_real(struct desc x, double val)
          case 'i':
             *x.u.int_ptr = real2int(val);
             break;
+         case 's':
+            *x.u.long_ptr = real2long(val);
+            break;
          default:
             fault("assignment to a real formal parameter called by name"
                " not possible because final actual parameter is not of "
@@ -201,6 +298,35 @@ int set_int(struct desc x, int val)
             break;
          case 'i':
             *x.u.int_ptr = val;
+            break;
+         case 's':
+            *x.u.long_ptr = int2long(val);
+            break;
+         default:
+            fault("assignment to an integer formal parameter called by "
+               "name not possible because final actual parameter is not"
+               " of arithmetic type");
+      }
+      return val;
+}
+
+/*--------------------------------------------------------------------*/
+
+int64_t set_long(struct desc x, int64_t val)
+{     /* assigns value to integer formal parameter called by name */
+      if (!x.lval)
+         fault("assignment to an integer formal parameter called by nam"
+            "e not possible because final actual parameter is not a var"
+            "iable");
+      switch (x.type)
+      {  case 'r':
+            *x.u.real_ptr = long2real(val);
+            break;
+         case 'i':
+            *x.u.int_ptr = long2int(val);
+            break;
+         case 's':
+            *x.u.long_ptr = val;
             break;
          default:
             fault("assignment to an integer formal parameter called by "
@@ -348,6 +474,7 @@ static int array_size(int type, struct dv *dv)
       switch (type)
       {  case 'r': size = sizeof(double); break;
          case 'i': size = sizeof(int); break;
+         case 's': size = sizeof(int64_t); break;
          case 'b': size = sizeof(bool); break;
          default:  assert(type != type);
       }
@@ -372,7 +499,7 @@ too:        fault("unable to allocate too long array");
 
 struct dv *alloc_array(int type, int n, ...)
 {     /* creates local array and returns pointer to its dope vector */
-      /* type defines array type ('r' - real, 'i' - integer, 'b' - Boo-
+      /* type defines array type ('r' - real, 'i' - integer, 's' - long, 'b' - Boo-
          lean) */
       /* n is number of subscript bounds */
       /* variable parameter list defines n pairs in the form (l, u),
@@ -460,6 +587,13 @@ struct dv *copy_real(struct arg arg)
          for (s = dope->base, t = dv->base; size > 0;
             s++, t++, size -= sizeof(double)) *t = int2real(*s);
       }
+      else if (type == 's')
+      {  /* actual array is of long type (conversion is needed) */
+         int64_t *s;
+         double *t;
+         for (s = dope->base, t = dv->base; size > 0;
+            s++, t++, size -= sizeof(double)) *t = long2real(*s);
+      }
       else
          fault("creation of a real formal array called by value not pos"
             "sible because final actual parameter is not an array of ar"
@@ -487,6 +621,49 @@ struct dv *copy_int(struct arg arg)
       }
       else if (type == 'i')
       {  /* actual array is of integer type */
+         if (size != 0) memcpy(dv->base, dope->base, size);
+      }
+      else if (type == 's')
+      {  /* actual array is of long type (conversion is needed) */
+         int64_t *s;
+         int *t;
+         for (s = dope->base, t = dv->base; size > 0;
+            s++, t++, size -= sizeof(int)) *t = long2int(*s);
+      }
+      else
+         fault("creation of an integer formal array called by value not"
+            " possible because final actual parameter is not an array o"
+            "f arithmetic type");
+      return dv;
+}
+
+/*--------------------------------------------------------------------*/
+
+struct dv *copy_long(struct arg arg)
+{     /* creates copy of integer formal array called by value */
+      struct dv *dope = arg.arg1; /* dope vector of actual array */
+      int type = (int)arg.arg2;   /* type of actual array */
+      struct dv *dv;
+      int size;
+      dv = copy_dv(0, dope);
+      size = array_size('s', dv);
+      dv->base = size == 0 ? NULL : push_stack(size);
+      if (type == 'r')
+      {  /* actual array is of real type (conversion is needed) */
+         double *s;
+         int64_t *t;
+         for (s = dope->base, t = dv->base; size > 0;
+            s++, t++, size -= sizeof(int64_t)) *t = real2long(*s);
+      }
+      else if (type == 'i')
+      {  /* actual array is of integer type (conversion is needed) */
+         int *s;
+         int64_t *t;
+         for (s = dope->base, t = dv->base; size > 0;
+            s++, t++, size -= sizeof(int64_t)) *t = int2long(*s);
+      }
+      else if (type == 's')
+      {  /* actual array is of long type */
          if (size != 0) memcpy(dv->base, dope->base, size);
       }
       else
@@ -565,6 +742,18 @@ int *loc_int(struct dv *dv, int n, ...)
       loc = loc_elem(dv, n, arg);
       va_end(arg);
       return (int *)dv->base + loc;
+}
+
+/*--------------------------------------------------------------------*/
+
+int64_t *loc_long(struct dv *dv, int n, ...)
+{     /* returns address of subscripted variable of integer type */
+      va_list arg;
+      int loc;
+      va_start(arg, n);
+      loc = loc_elem(dv, n, arg);
+      va_end(arg);
+      return (int64_t *)dv->base + loc;
 }
 
 /*--------------------------------------------------------------------*/

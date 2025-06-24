@@ -32,6 +32,7 @@
 #include <signal.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -97,14 +98,17 @@ struct desc
          'r' - real
          'i' - integer
          'b' - Boolean
+	  	 's' - long
          'l' - label (in case of designational expression) */
       union
       {  double *real_ptr;    /* address of real variable */
          int *int_ptr;        /* address of integer variable */
          bool *bool_ptr;      /* address of Boolean variable */
+		 int64_t *long_ptr;   /* address of long type */
          double real_val;     /* value of real type */
          int int_val;         /* value of integer type */
-         bool bool_val;       /* value of Boolean type*/
+         bool bool_val;       /* value of Boolean type */
+		 int64_t long_val;    /* value of long type */
          struct label label;  /* value of label type */
       } u;
 };
@@ -155,16 +159,23 @@ extern struct dsa *global_dsa;
 #define not(x)             ((x) ? false : true)
 
 extern int real2int(double x);
+extern int64_t real2long(double x);
 extern double int2real(int x);
+extern double long2real(int64_t x);
+extern int64_t int2long(int x);
+extern int long2int(int64_t x);
 extern double expr(double x, double r);
 extern int expi(int i, int j);
+extern int64_t expl(int64_t i, int64_t j);
 extern double expn(double x, int n);
 extern double get_real(struct desc x);
 extern int get_int(struct desc x);
+extern int64_t get_long(struct desc x);
 extern bool get_bool(struct desc x);
 extern struct label get_label(struct desc x);
 extern double set_real(struct desc x, double val);
 extern int set_int(struct desc x, int val);
+extern int64_t set_long(struct desc x, int64_t val);
 extern bool set_bool(struct desc x, bool val);
 extern struct arg make_arg(void *arg1, void *arg2);
 extern struct label make_label(void *jump, int kase);
@@ -177,9 +188,11 @@ extern struct dv *own_array(int type, int n, ...);
 extern struct dv *own_same(int type, struct dv *dope);
 extern struct dv *copy_real(struct arg arg);
 extern struct dv *copy_int(struct arg arg);
+extern struct dv *copy_long(struct arg arg);
 extern struct dv *copy_bool(struct arg arg);
 extern double *loc_real(struct dv *dv, int n, ...);
 extern int *loc_int(struct dv *dv, int n, ...);
+extern int64_t *loc_long(struct dv *dv, int n, ...);
 extern bool *loc_bool(struct dv *dv, int n, ...);
 
 #define REAL_FMT "%.12g"

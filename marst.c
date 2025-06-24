@@ -22,7 +22,9 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -211,6 +213,7 @@ static int symbol;
 #define S_UNTIL      54 /* until */
 #define S_VALUE      55 /* value */
 #define S_WHILE      56 /* while */
+#define S_LONG       57 /* long */
 
 static int s_char;
 /* Value of the current basic symbol. It has sense only for S_LETTER and
@@ -496,6 +499,7 @@ scan: skip_pad();
                goto alfa;
             case 'l':
                check_word(5, "label",     S_LABEL);
+               check_word(4, "long",      S_LONG);
                goto alfa;
             case 'o':
                check_word(3, "own",       S_OWN);
@@ -909,6 +913,7 @@ clos:    add_char(k, '"'); /* closing quote */
             case S_UNTIL:        image = "until";     break;
             case S_VALUE:        image = "value";     break;
             case S_WHILE:        image = "while";     break;
+            case S_LONG:         image = "long";      break;
             default: assert(symbol != symbol);
          }
          strcpy(token[k].image, image), scan_symbol();
@@ -1028,16 +1033,20 @@ struct CSQE
 #define a_and           "and"
 #define a_copy_bool     "copy_bool"
 #define a_copy_int      "copy_int"
+#define a_copy_long     "copy_long"
 #define a_copy_real     "copy_real"
 #define a_equal         "equal"
 #define a_equiv         "equiv"
 #define a_expi          "expi"
+#define a_expil         "expil"
 #define a_expn          "expn"
+#define a_expnl         "expnl"
 #define a_expr          "expr"
 #define a_false         "false"
 #define a_fault         "fault"
 #define a_get_bool      "get_bool"
 #define a_get_int       "get_int"
+#define a_get_long      "get_long"
 #define a_get_label     "get_label"
 #define a_get_real      "get_real"
 #define a_global_dsa    "global_dsa"
@@ -1045,9 +1054,11 @@ struct CSQE
 #define a_greater       "greater"
 #define a_impl          "impl"
 #define a_int2real      "int2real"
+#define a_long2real     "long2real"
 #define a_less          "less"
 #define a_loc_bool      "loc_bool"
 #define a_loc_int       "loc_int"
+#define a_loc_long      "loc_long"
 #define a_loc_real      "loc_real"
 #define a_make_arg      "make_arg"
 #define a_make_label    "make_label"
@@ -1061,8 +1072,10 @@ struct CSQE
 #define a_pop_stack     "pop_stack"
 #define a_print         "print"
 #define a_real2int      "real2int"
+#define a_real2long     "real2long"
 #define a_set_bool      "set_bool"
 #define a_set_int       "set_int"
+#define a_set_long      "set_long"
 #define a_set_real      "set_real"
 #define a_stack_top     "stack_top"
 #define a_true          "true"
@@ -1262,6 +1275,7 @@ struct IDENT
 #define F_OWN     0x0400   /* own */
 #define F_CODE    0x0800   /* code procedure */
 #define F_BLTIN   0x1000   /* built-in procedure */
+#define F_LONG    0x2000   /* long */
       int dim;
       /* identifier dimension (number of subscripts for array, number
          of parameters for procedure, number of label used in longjmp,
@@ -1363,16 +1377,22 @@ static void to_real(CODE *x)
          prepend(x, a_int2real "(");
          append(x, ")");
       }
+      else if (second_pass && x->type == F_LONG)
+      {  x->lval = 0;
+         x->type = F_REAL;
+         prepend(x, a_long2real "(");
+         append(x, ")");
+      }
       return;
 }
 
 /*----------------------------------------------------------------------
--- to_int - generate code to convert real expression to integer one.
+-- real_to_int - generate code to convert real expression to integer one.
 --
 -- This routine generates code to convert expression of real type to
 -- expression of integer type. */
 
-static void to_int(CODE *x)
+static void real_to_int(CODE *x)
 {     if (second_pass && x->type == F_REAL)
       {  x->lval = 0;
          x->type = F_INT;
@@ -1380,6 +1400,39 @@ static void to_int(CODE *x)
          append(x, ")");
       }
       return;
+}
+
+/*----------------------------------------------------------------------
+-- real_to_long - generate code to convert real expression to long one.
+--
+-- This routine generates code to convert expression of real type to
+-- expression of long type. */
+
+static void real_to_long(CODE *x)
+{     if (second_pass && x->type == F_REAL)
+      {  x->lval = 0;
+         x->type = F_LONG;
+         prepend(x, a_real2long "(");
+         append(x, ")");
+      }
+      return;
+}
+
+/*----------------------------------------------------------------------
+-- number_is_int - check if the provided string fits in a 32bit integer. */
+
+static int number_is_int(const char *str) {
+    errno = 0;
+    char *endptr;
+    int64_t val = strtoll(str, &endptr, 10);
+
+    // Check for parsing errors
+    if (errno != 0 || *endptr != '\0') {
+        return 0;
+    }
+
+    // Check if the value fits in int32_t range
+    return val >= INT32_MIN && val <= INT32_MAX;
 }
 
 /*----------------------------------------------------------------------
@@ -1449,10 +1502,11 @@ static CODE *subscripted_variable(void)
       /* generate head of code */
       if (second_pass)
       {  code->lval = 1;
-         code->type = arr->flags & (F_REAL | F_INT | F_BOOL);
+         code->type = arr->flags & (F_REAL | F_INT | F_LONG | F_BOOL);
          append(code, "(*%s(",
             code->type == F_REAL ? a_loc_real :
-            code->type == F_INT  ? a_loc_int  : a_loc_bool);
+            code->type == F_INT  ? a_loc_int  :
+            code->type == F_LONG ? a_loc_long : a_loc_bool);
          if (arr->flags & F_OWN)
          {  /* own array */
             append(code, "%s_%d, ?, ",
@@ -1479,7 +1533,7 @@ static CODE *subscripted_variable(void)
             dim = 0;
          }
          get_token(/* [ or , */);
-         expr = expression(), to_int(expr);
+         expr = expression(), real_to_int(expr);
          if (second_pass && expr->type != F_INT)
          {  error("invalid type of subscript expression");
             expr->type = F_INT;
@@ -1554,7 +1608,7 @@ static CODE *switch_designator(void)
             error("invalid number of subscripts in switch designator fo"
                "r `%s'", swit->name);
          get_token(/* [ or , */);
-         code = expression(), to_int(code);
+         code = expression(), real_to_int(code);
          if (code->type != F_INT)
          {  error("invalid type of subscript expression");
             code->type = F_INT;
@@ -1699,6 +1753,7 @@ skip1:   get_token(/* string */);
          if (second_pass)
          {  if (id->flags == (F_REAL | F_BYNAME) ||
                 id->flags == (F_INT  | F_BYNAME) ||
+                id->flags == (F_LONG | F_BYNAME) ||
                 id->flags == (F_BOOL | F_BYNAME))
             {  /* actual parameter is a simple formal parameter called
                   by name (except labels) */
@@ -1706,7 +1761,7 @@ skip1:   get_token(/* string */);
                {  /* the corresponding formal parameter must be simple
                      formal parameter of appropriate type */
                   int actual_type, formal_type;
-                  if (arg->flags & ~(F_REAL | F_INT | F_BOOL | F_BYVAL |
+                  if (arg->flags & ~(F_REAL | F_INT | F_LONG | F_BOOL | F_BYVAL |
                      F_BYNAME))
                   {  error("formal parameter `%s' called by name and pa"
                         "ssed as actual parameter conflicts with kind o"
@@ -1716,11 +1771,11 @@ skip1:   get_token(/* string */);
                         arg->block->proc->ssn_decl);
                      goto skip1a;
                   }
-                  actual_type = id->flags  & (F_REAL | F_INT | F_BOOL);
-                  formal_type = arg->flags & (F_REAL | F_INT | F_BOOL);
-                  if (actual_type & (F_REAL | F_INT))
-                  {  actual_type &= ~(F_REAL | F_INT);
-                     formal_type &= ~(F_REAL | F_INT);
+                  actual_type = id->flags  & (F_REAL | F_INT | F_LONG | F_BOOL);
+                  formal_type = arg->flags & (F_REAL | F_INT | F_LONG | F_BOOL);
+                  if (actual_type & (F_REAL | F_INT | F_LONG))
+                  {  actual_type &= ~(F_REAL | F_INT | F_LONG);
+                     formal_type &= ~(F_REAL | F_INT | F_LONG);
                   }
                   if (actual_type != formal_type)
                   {  error("type of formal parameter `%s' called by nam"
@@ -1754,11 +1809,11 @@ skip1a:        get_token(/* id */);
                         arg->block->proc->ssn_decl);
                      goto skip2;
                   }
-                  actual_type = id->flags  & (F_REAL | F_INT | F_BOOL);
-                  formal_type = arg->flags & (F_REAL | F_INT | F_BOOL);
+                  actual_type = id->flags  & (F_REAL | F_INT | F_LONG | F_BOOL);
+                  formal_type = arg->flags & (F_REAL | F_INT | F_LONG | F_BOOL);
                   if (arg->flags & F_BYVAL)
-                  {  actual_type &= ~(F_REAL | F_INT);
-                     formal_type &= ~(F_REAL | F_INT);
+                  {  actual_type &= ~(F_REAL | F_INT | F_LONG);
+                     formal_type &= ~(F_REAL | F_INT | F_LONG);
                   }
                   if (actual_type != formal_type)
                   {  error("type of array `%s' passed as actual paramet"
@@ -1794,6 +1849,7 @@ skip1a:        get_token(/* id */);
                append(code, ", (void *)'%c')",
                   (id->flags & F_REAL) ? 'r' :
                   (id->flags & F_INT)  ? 'i' :
+                  (id->flags & F_LONG) ? 's' :
                   (id->flags & F_BOOL) ? 'b' : '?');
 skip2:         get_token(/* id */);
                goto done;
@@ -1835,7 +1891,7 @@ skip3:         get_token(/* id */);
                      or simple formal parameter of appropriate type
                      (since identifier of <type> procedure having no
                      parameters is in itself an expression) */
-                  int simple = !(arg->flags & ~(F_REAL | F_INT | F_BOOL
+                  int simple = !(arg->flags & ~(F_REAL | F_INT | F_LONG | F_BOOL
                      | F_BYVAL | F_BYNAME));
                   int actual_type, formal_type;
                   if (!(simple || (arg->flags & F_PROC)))
@@ -1847,17 +1903,17 @@ skip3:         get_token(/* id */);
                         arg->block->proc->ssn_decl);
                      goto skip4;
                   }
-                  actual_type = id->flags  & (F_REAL | F_INT | F_BOOL);
-                  formal_type = arg->flags & (F_REAL | F_INT | F_BOOL);
-                  if (actual_type & (F_REAL | F_INT))
-                  {  actual_type &= ~(F_REAL | F_INT);
-                     formal_type &= ~(F_REAL | F_INT);
+                  actual_type = id->flags  & (F_REAL | F_INT | F_LONG | F_BOOL);
+                  formal_type = arg->flags & (F_REAL | F_INT | F_LONG | F_BOOL);
+                  if (actual_type & (F_REAL | F_INT | F_LONG))
+                  {  actual_type &= ~(F_REAL | F_INT | F_LONG);
+                     formal_type &= ~(F_REAL | F_INT | F_LONG);
                   }
                   if (!simple) goto proc;
                   /* if the corresponding formal parameter is simple
                      formal parameter then actual procedure must have
                      appropriate type and empty formal parameter part */
-                  if (!(id->flags & (F_REAL | F_INT | F_BOOL)) ||
+                  if (!(id->flags & (F_REAL | F_INT | F_LONG | F_BOOL)) ||
                         id->dim > 0)
                   {  error("procedure identifier `%s' that is not in it"
                         "self a complete expression and passed as actua"
@@ -2017,7 +2073,7 @@ skip5:         get_token(/* id */);
             {  /* the corresponding formal parameter must be simple
                   formal parameter of appropriate type */
                int actual_type, formal_type;
-               if (arg->flags & ~(F_REAL | F_INT | F_BOOL | F_LABEL |
+               if (arg->flags & ~(F_REAL | F_INT | F_LONG | F_BOOL | F_LABEL |
                      F_BYVAL | F_BYNAME))
                {  error("expression passed as actual parameter conflict"
                      "s with kind of formal parameter `%s' as specified"
@@ -2028,10 +2084,10 @@ skip5:         get_token(/* id */);
                }
                actual_type = expr->type;
                formal_type = arg->flags &
-                  (F_REAL | F_INT | F_BOOL | F_LABEL);
-               if (actual_type & (F_REAL | F_INT))
-               {  actual_type &= ~(F_REAL | F_INT);
-                  formal_type &= ~(F_REAL | F_INT);
+                  (F_REAL | F_INT | F_LONG | F_BOOL | F_LABEL);
+               if (actual_type & (F_REAL | F_INT | F_LONG))
+               {  actual_type &= ~(F_REAL | F_INT | F_LONG);
+                  formal_type &= ~(F_REAL | F_INT | F_LONG);
                }
                if (actual_type != formal_type)
                {  error("type of expression passed as actual parameter "
@@ -2068,6 +2124,13 @@ skip5:         get_token(/* id */);
                      append(emit, "      res.u.int_ptr = ");
                   else
                      append(emit, "      res.u.int_val = ");
+                  break;
+               case F_LONG:
+                  append(emit, "      res.type = 's';\n");
+                  if (expr->lval)
+                     append(emit, "      res.u.long_ptr = ");
+                  else
+                     append(emit, "      res.u.long_val = ");
                   break;
                case F_BOOL:
                   append(emit, "      res.type = 'b';\n");
@@ -2170,7 +2233,7 @@ static int ext_comma(void)
 --
 -- get_xxx((global_dsa = ..., id(p1, p2, ..., pn)))
 --
--- where get_xxx is library routine get_real, get_int, or get_bool,
+-- where get_xxx is library routine get_real, get_int, get_long, or get_bool,
 -- that converts struct desc to real, int, or bool respectively; id is
 -- name of routine that represents procedure declaration and computes
 -- value in form of struct desc; p1, p2, ..., pn are actual parameters
@@ -2197,7 +2260,7 @@ static CODE *function_designator(int stmt)
             error("invalid use of `%s' as procedure identifier",
                proc->name);
          code->lval = 0;
-         code->type = proc->flags & (F_REAL | F_INT | F_BOOL);
+         code->type = proc->flags & (F_REAL | F_INT | F_LONG | F_BOOL);
          if ((proc->flags & F_BLTIN) &&
              (strcmp(proc->name, "inline") == 0 ||
               strcmp(proc->name, "print") == 0))
@@ -2216,6 +2279,7 @@ static CODE *function_designator(int stmt)
          append(code, "%s(",
             (code->type & F_REAL) ? a_get_real :
             (code->type & F_INT)  ? a_get_int  :
+            (code->type & F_LONG) ? a_get_long :
             (code->type & F_BOOL) ? a_get_bool : "" /* void */);
          if (proc->flags & F_BYNAME)
          {  /* formal procedure */
@@ -2356,7 +2420,7 @@ static CODE *call_by_name(IDENT *id)
 --
 -- get_xxx((global_dsa = arg.arg2, arg.arg1()))
 --
--- where get_xxx is library routine get_real, get_int, or get_bool,
+-- where get_xxx is library routine get_real, get_int, get_long, or get_bool,
 -- that converts struct desc (returned by thunk or routine corresponding
 -- to type procedure with empty formal parameter list) to real, int, or
 -- bool respectively (see also the routine call_by_name).
@@ -2423,6 +2487,9 @@ static CODE *primary(void)
                for (ptr = t_image; *ptr != '\0'; ptr++)
                   if (*ptr != '0') break;
                if (*ptr == '\0') ptr--;
+               if (!number_is_int(ptr)) {
+                   code->type = F_LONG;
+               }
                append(code, "%s", ptr);
             }
          }
@@ -2477,6 +2544,12 @@ proc:       code = function_designator(0);
                   case F_INT | F_OWN:
                      /* integer own simple variable */
                   case F_INT | F_BYVAL:
+                     /* long formal parameter called by value */
+                  case F_LONG:
+                     /* long local simple variable */
+                  case F_LONG | F_OWN:
+                     /* long own simple variable */
+                  case F_LONG | F_BYVAL:
                      /* integer formal parameter called by value */
                   case F_BOOL:
                      /* Boolean local simple variable */
@@ -2485,7 +2558,7 @@ proc:       code = function_designator(0);
                   case F_BOOL | F_BYVAL:
                      /* Boolean formal parameter called by value */
                      code->lval = 1;
-                     code->type = id->flags & (F_REAL | F_INT | F_BOOL);
+                     code->type = id->flags & (F_REAL | F_INT | F_LONG | F_BOOL);
                      if (id->flags & F_OWN)
                         append(code, "%s_%d", id->name, id->block->seqn)
                            ;
@@ -2508,6 +2581,15 @@ proc:       code = function_designator(0);
                      code->lval = 0;
                      code->type = F_INT;
                      append(code, a_get_int "(");
+                     catenate(code, call_by_name(id));
+                     append(code, ")");
+                     break;
+                  case F_LONG | F_BYNAME:
+                     /* long formal parameter called by name */
+                     /* only value is processed here */
+                     code->lval = 0;
+                     code->type = F_LONG;
+                     append(code, a_get_long "(");
                      catenate(code, call_by_name(id));
                      append(code, ")");
                      break;
@@ -2628,7 +2710,7 @@ static CODE *factor(void)
       x = primary();
       while (t_delim(S_POWER))
       {  if (second_pass)
-         {  if (!(x->type == F_INT || x->type == F_REAL))
+         {  if (!(x->type == F_INT || x->type == F_LONG || x->type == F_REAL))
             {  error("operand preceding `^' is not of arithmetic type");
                x->type = F_INT;
             }
@@ -2636,15 +2718,19 @@ static CODE *factor(void)
          get_token(/* ^ */);
          y = primary();
          if (second_pass)
-         {  if (!(y->type == F_INT || y->type == F_REAL))
+         {  if (!(y->type == F_INT || y->type == F_LONG || y->type == F_REAL))
             {  error("operand following `^' is not of arithmetic type");
                y->type = F_INT;
             }
             x->lval = 0;
             if (y->type == F_REAL)
                to_real(x), prepend(x, a_expr "(");
-            else if (x->type == F_REAL)
+            else if (x->type == F_REAL && y->type == F_INT)
                prepend(x, a_expn "(");
+            else if (x->type == F_REAL && y->type == F_LONG)
+               prepend(x, a_expnl "(");
+            else if (x->type == F_LONG || y->type == F_LONG)
+               prepend(x, a_expil "(");
             else
                prepend(x, a_expi "(");
             append(x, ", ");
@@ -2661,26 +2747,26 @@ static CODE *term(void)
       while (t_delim(S_TIMES) || t_delim(S_SLASH) || t_delim(S_INTDIV))
       {  int op = token[1].delim;
          if (second_pass)
-         {  if (!(x->type == F_INT || x->type == F_REAL))
+         {  if (!(x->type == F_INT || x->type == F_LONG || x->type == F_REAL))
             {  error("operand preceding `*', `/', or `%%' is not of ari"
                   "thmetic type");
                x->type = F_INT;
             }
-            if (op == S_INTDIV && x->type != F_INT)
-            {  error("operand preceding `%%' is not of integer type");
+            if (op == S_INTDIV && !(x->type == F_INT || x->type == F_LONG))
+            {  error("operand preceding `%%' is not of integer or long type");
                x->type = F_INT;
             }
          }
          get_token(/* * or / or % */);
          y = factor();
          if (second_pass)
-         {  if (!(y->type == F_INT || y->type == F_REAL))
+         {  if (!(y->type == F_INT || x->type == F_LONG || y->type == F_REAL))
             {  error("operand following `*', `/', or `%%' is not of ari"
                   "thmetic type");
                y->type = F_INT;
             }
-            if (op == S_INTDIV && y->type != F_INT)
-            {  error("operand following `%%' is not of integer type");
+            if (op == S_INTDIV && !(y->type == F_INT || x->type == F_LONG))
+            {  error("operand following `%%' is not of integer or long type");
                y->type = F_INT;
             }
             x->lval = 0;
@@ -2700,7 +2786,7 @@ static CODE *arith_expression(void)
          get_token(/* + or - */);
          x = term();
          if (second_pass)
-         {  if (!(x->type == F_INT || x->type == F_REAL))
+         {  if (!(x->type == F_INT || x->type == F_LONG || x->type == F_REAL))
             {  error("operand following unary `+' or `-' is not of arit"
                   "hmetic type");
                x->type = F_INT;
@@ -2714,7 +2800,7 @@ static CODE *arith_expression(void)
       while (t_delim(S_PLUS) || t_delim(S_MINUS))
       {  int op = token[1].delim;
          if (second_pass)
-         {  if (!(x->type == F_INT || x->type == F_REAL))
+         {  if (!(x->type == F_INT || x->type == F_LONG || x->type == F_REAL))
             {  error("operand preceding `+' or `-' is not of arithmetic"
                   " type");
                x->type = F_INT;
@@ -2723,7 +2809,7 @@ static CODE *arith_expression(void)
          get_token(/* + or - */);
          y = term();
          if (second_pass)
-         {  if (!(y->type == F_INT || y->type == F_REAL))
+         {  if (!(y->type == F_INT || x->type == F_LONG || y->type == F_REAL))
             {  error("operand following `+' or `-' is not of arithmetic"
                   " type");
                y->type = F_INT;
@@ -2753,7 +2839,7 @@ static CODE *relation(void)
             error("invalid use of relational operator");
          flag = 1;
          if (second_pass)
-         {  if (!(x->type == F_INT || x->type == F_REAL))
+         {  if (!(x->type == F_INT || x->type == F_LONG || x->type == F_REAL))
             {  error("operand preceding relational operator is not of a"
                   "rithmetic type");
                x->type = F_INT;
@@ -2762,7 +2848,7 @@ static CODE *relation(void)
          get_token(/* <rho> */);
          y = arith_expression();
          if (second_pass)
-         {  if (!(y->type == F_INT || y->type == F_REAL))
+         {  if (!(y->type == F_INT || x->type == F_LONG || y->type == F_REAL))
             {  error("operand following relational operator is not of a"
                   "rithmetic type");
                y->type = F_INT;
@@ -2950,11 +3036,10 @@ static CODE *expression(void)
             error("missing `else' delimiter");
          ae = expression(); /* expression after else */
          if (second_pass)
-         {  if (sae->type == F_INT && ae->type == F_REAL) to_real(sae);
-            if (sae->type == F_REAL && ae->type == F_INT) to_real(ae);
+         {  if (sae->type != F_REAL && ae->type == F_REAL) to_real(sae);
+            if (sae->type == F_REAL && ae->type != F_REAL) to_real(ae);
             if (sae->type != ae->type)
-               error("expressions before and after 'else' incompatible")
-                  ;
+               error("expressions before and after 'else' incompatible");
             x->lval = 0;
             x->type = sae->type;
             prepend(x, "((");
@@ -3054,7 +3139,7 @@ static CODE *assignment_statement(int flag)
                error("invalid assignment to procedure identifier `%s' o"
                   "utside procedure declaration body", id->name);
             /* and procedure must have type */
-            if (!(id->flags & (F_REAL | F_INT | F_BOOL)))
+            if (!(id->flags & (F_REAL | F_INT | F_LONG | F_BOOL)))
                error("invalid use of typeless procedure identifier `%s'"
                   " in left part of assignment statement", id->name);
          }
@@ -3068,9 +3153,10 @@ static CODE *assignment_statement(int flag)
          /* type conversion is allowed only for final expression */
          if (x->lval == 0)
          {  /* after delimiter := final expression detected */
-            if ((id->flags & F_REAL) && x->type == F_INT)  to_real(x);
-            if ((id->flags & F_INT)  && x->type == F_REAL) to_int(x);
-            if ((id->flags & (F_REAL | F_INT | F_BOOL)) != x->type)
+            if ((id->flags & F_REAL) && x->type != F_REAL) to_real(x);
+            if ((id->flags & F_INT)  && x->type == F_REAL) real_to_int(x);
+            if ((id->flags & F_LONG) && x->type == F_REAL) real_to_long(x);
+            if ((id->flags & (F_REAL | F_INT | F_LONG | F_BOOL)) != x->type)
                error("type of identifier `%s' in left part of assignmen"
                   "t statement incompatible with type of assigned expre"
                   "ssion", id->name);
@@ -3078,7 +3164,7 @@ static CODE *assignment_statement(int flag)
          else
          {  /* after delimiter := assignement statement detected; type
                conversion is not allowed */
-            if ((id->flags & (F_REAL | F_INT | F_BOOL)) != x->type)
+            if ((id->flags & (F_REAL | F_INT | F_LONG | F_BOOL)) != x->type)
                error("different types in left part list of assignment s"
                   "tatement");
          }
@@ -3096,6 +3182,12 @@ static CODE *assignment_statement(int flag)
                /* integer own simple variable */
             case F_INT | F_BYVAL:
                /* integer simple formal parameter called by value */
+            case F_LONG:
+               /* long local simple variable */
+            case F_LONG | F_OWN:
+               /* long own simple variable */
+            case F_LONG | F_BYVAL:
+               /* long simple formal parameter called by value */
             case F_BOOL:
                /* Boolean local simple variable */
             case F_BOOL | F_OWN:
@@ -3103,7 +3195,7 @@ static CODE *assignment_statement(int flag)
             case F_BOOL | F_BYVAL:
                /* Boolean simple formal parameter called by value */
                x->lval = 1; /* mark assignment statement */
-               x->type = id->flags & (F_REAL | F_INT | F_BOOL);
+               x->type = id->flags & (F_REAL | F_INT | F_LONG | F_BOOL);
                if (id->flags & F_OWN)
                   prepend(x, "%s_%d = ", id->name, id->block->seqn);
                else
@@ -3134,6 +3226,18 @@ static CODE *assignment_statement(int flag)
                   x->type = F_INT;
                }
                break;
+            case F_LONG | F_BYNAME:
+               /* long simple formal parameter called by name */
+               {  CODE *code = call_by_name(id);
+                  prepend(code, a_set_long "(");
+                  append(code, ", ");
+                  catenate(code, x);
+                  append(code, ")");
+                  x = code;
+                  x->lval = 1; /* mark assignment statement */
+                  x->type = F_LONG;
+               }
+               break;
             case F_BOOL | F_BYNAME:
                /* Boolean simple formal parameter called by name */
                {  CODE *code = call_by_name(id);
@@ -3150,13 +3254,16 @@ static CODE *assignment_statement(int flag)
                /* real local procedure */
             case F_INT | F_PROC:
                /* integer local procedure */
+            case F_LONG | F_PROC:
+               /* long local procedure */
             case F_BOOL | F_PROC:
                /* Boolean local procedure */
                x->lval = 1; /* mark assignment statement */
-               x->type = id->flags & (F_REAL | F_INT | F_BOOL);
+               x->type = id->flags & (F_REAL | F_INT | F_LONG | F_BOOL);
                prepend(x, "dsa_%d->retval.u.%s = ", dsa_level(id)+1,
                   x->type == F_REAL ? "real_val" :
                   x->type == F_INT  ? "int_val"  :
+                  x->type == F_LONG ? "long_val" :
                   x->type == F_BOOL ? "bool_val" : "???");
                break;
             default:
@@ -3183,8 +3290,9 @@ skip1:   ;
             /* type conversion is allowed only for final expression */
             if (y->lval == 0)
             {  /* after delimiter := final expression detected */
-               if (x->type == F_REAL && y->type == F_INT) to_real(y);
-               if (x->type == F_INT && y->type == F_REAL) to_int(y);
+               if (x->type == F_REAL && y->type != F_REAL) to_real(y);
+               if (x->type == F_INT  && y->type == F_REAL) real_to_int(y);
+               if (x->type == F_LONG && y->type == F_REAL) real_to_long(y);
                if (x->type != y->type)
                   error("type of destination in left part of assignment"
                      " statement incompatible with type of assigned exp"
@@ -3211,8 +3319,7 @@ skip2:      ;
             {  error("invalid use of expression");
                goto skip3;
             }
-            if (!(x->type == F_REAL || x->type == F_INT ||
-                  x->type == F_BOOL))
+            if (!(x->type == F_REAL || x->type == F_INT || x->type == F_LONG || x->type == F_BOOL))
             {  error("invalid type of assigned expression in assignment"
                   " statement");
                x->type = F_REAL;
@@ -3473,8 +3580,14 @@ static CODE *get_variable(IDENT *id)
                /* integer simple own variable */
             case F_INT | F_BYVAL:
                /* integer simple formal parameter called by value */
+            case F_LONG:
+               /* long simple local variable */
+            case F_LONG | F_OWN:
+               /* long simple own variable */
+            case F_LONG | F_BYVAL:
+               /* long simple formal parameter called by value */
                expr->lval = 0;
-               expr->type = id->flags & (F_REAL | F_INT | F_BOOL);
+               expr->type = id->flags & (F_REAL | F_INT | F_LONG | F_BOOL);
                if (id->flags & F_OWN)
                   append(expr, "%s_%d", id->name, id->block->seqn);
                else
@@ -3497,6 +3610,14 @@ static CODE *get_variable(IDENT *id)
                catenate(expr, call_by_name(id));
                append(expr, ")");
                break;
+            case F_LONG | F_BYNAME:
+               /* long simple formal parameter called by name */
+               expr->lval = 0;
+               expr->type = F_LONG;
+               append(expr, a_get_long "(");
+               catenate(expr, call_by_name(id));
+               append(expr, ")");
+               break;
             default:
                /* invalid controlled variable */
                append(expr, "???");
@@ -3515,8 +3636,9 @@ static CODE *get_variable(IDENT *id)
 
 static CODE *set_variable(IDENT *id, CODE *expr)
 {     if (second_pass)
-      {  if ((id->flags & F_REAL) && expr->type == F_INT) to_real(expr);
-         if ((id->flags & F_INT)  && expr->type == F_REAL) to_int(expr);
+      {  if ((id->flags & F_REAL) && expr->type != F_REAL) to_real(expr);
+         if ((id->flags & F_INT)  && expr->type == F_REAL) real_to_int(expr);
+         if ((id->flags & F_LONG) && expr->type == F_REAL) real_to_long(expr);
          switch (id->flags)
          {  case F_REAL:
                /* real simple local variable */
@@ -3530,7 +3652,13 @@ static CODE *set_variable(IDENT *id, CODE *expr)
                /* integer own local variable */
             case F_INT | F_BYVAL:
                /* integer simple formal parameter called by value */
-               expr->type = id->flags & (F_REAL | F_INT | F_BOOL);
+            case F_LONG:
+               /* long simple local variable */
+            case F_LONG | F_OWN:
+               /* long own local variable */
+            case F_LONG | F_BYVAL:
+               /* long simple formal parameter called by value */
+               expr->type = id->flags & (F_REAL | F_INT | F_LONG | F_BOOL);
                if (id->flags & F_OWN)
                   prepend(expr, "%s_%d = ", id->name, id->block->seqn);
                else
@@ -3559,6 +3687,18 @@ static CODE *set_variable(IDENT *id, CODE *expr)
                   expr = code;
                   expr->lval = 1; /* mark assignment statement */
                   expr->type = F_INT;
+               }
+               break;
+            case F_LONG | F_BYNAME:
+               /* integer simple formal parameter called by name */
+               {  CODE *code = call_by_name(id);
+                  prepend(code, a_set_long "(");
+                  append(code, ", ");
+                  catenate(code, expr);
+                  append(code, ")");
+                  expr = code;
+                  expr->lval = 1; /* mark assignment statement */
+                  expr->type = F_LONG;
                }
                break;
             default:
@@ -3675,7 +3815,7 @@ static CODE *for_statement(void)
             F_STRING))
             error("invalid use of identifier `%s' as controlled variabl"
                "e", id->name);
-         else if (!(id->flags & (F_REAL | F_INT)))
+         else if (!(id->flags & (F_REAL | F_INT | F_LONG)))
             error("invalid type of controlled variable `%s'", id->name);
       }
 loop: /* translate the current for list element */
@@ -3683,7 +3823,7 @@ loop: /* translate the current for list element */
       /* V := expression */
       {  CODE *expr = expression();
          if (second_pass)
-         {  if (!(expr->type == F_REAL || expr->type == F_INT))
+         {  if (!(expr->type == F_REAL || expr->type == F_INT || expr->type == F_LONG))
             {  error("invalid type of expression assigned to controlled"
                   " variable");
                expr->type = F_REAL;
@@ -3719,8 +3859,9 @@ loop: /* translate the current for list element */
             teta-variables for different for statement are declared
             always in different blocks. */
          /* on the first pass, when we need to declare teta, the type
-            of B is unknown yet; that's why two variables teta_i of
-            integer type and teta_r of real type are declared */
+            of B is unknown yet; that's why three variables teta_i of
+            integer type, teta_r of real type, and teta_s of long type
+            are declared */
          if (first_pass)
          {  teta = look_up("teta_r", 0, t_ssn);
             if (teta->ssn_decl == 0) teta->ssn_decl = t_ssn;
@@ -3728,6 +3869,9 @@ loop: /* translate the current for list element */
             teta = look_up("teta_i", 0, t_ssn);
             if (teta->ssn_decl == 0) teta->ssn_decl = t_ssn;
             teta->flags = F_INT;
+            teta = look_up("teta_s", 0, t_ssn);
+            if (teta->ssn_decl == 0) teta->ssn_decl = t_ssn;
+            teta->flags = F_LONG;
          }
          /* parse expression B following 'step' */
          get_token(/* step */);
@@ -3738,6 +3882,8 @@ loop: /* translate the current for list element */
                teta = look_up("teta_r", 0, 0);
             else if (expr->type == F_INT)
                teta = look_up("teta_i", 0, 0);
+            else if (expr->type == F_LONG)
+               teta = look_up("teta_s", 0, 0);
             else
             {  error("expression following `step' is not of arithmetic "
                   "type");
@@ -3767,11 +3913,10 @@ loop: /* translate the current for list element */
          expr = expression();
          /* convert C to type of V */
          if (second_pass)
-         {  if ((id->flags & F_REAL) && expr->type == F_INT)
-               to_real(expr);
-            if ((id->flags & F_INT) && expr->type == F_REAL)
-               to_int(expr);
-            if (!(expr->type == F_REAL || expr->type == F_INT))
+         {  if ((id->flags & F_REAL) && expr->type != F_REAL) to_real(expr);
+            if ((id->flags & F_INT)  && expr->type == F_REAL) real_to_int(expr);
+            if ((id->flags & F_LONG) && expr->type == F_REAL) real_to_long(expr);
+            if (!(expr->type == F_REAL || expr->type == F_INT || expr->type == F_LONG))
             {  error("expression following `until' is not of arithmetic"
                   " type");
                expr->type = F_REAL;
@@ -3812,13 +3957,12 @@ loop: /* translate the current for list element */
          {  /* and again we should be very careful */
             expr = new_code();
             expr->lval = 0;
-            expr->type = (teta->flags & (F_REAL | F_INT));
-            append(expr, "dsa_%d->%s_%d",
-               current_level(), teta->name, teta->block->seqn);
-            if ((id->flags & F_REAL) && (teta->flags & F_INT))
-               to_real(expr);
-            if ((id->flags & F_INT) && (teta->flags & F_REAL))
-               to_int(expr);
+            expr->type = (teta->flags & (F_REAL | F_INT | F_LONG));
+            append(expr, "dsa_%d->%s_%d", current_level(), teta->name, teta->block->seqn);
+            if ((id->flags & F_REAL) && (teta->flags & F_INT))  to_real(expr);
+            if ((id->flags & F_REAL) && (teta->flags & F_LONG)) to_real(expr);
+            if ((id->flags & F_INT)  && (teta->flags & F_REAL)) real_to_int(expr);
+            if ((id->flags & F_LONG) && (teta->flags & F_REAL)) real_to_long(expr);
             append(expr, " + ");
             catenate(expr, get_variable(id));
             catenate(code, set_variable(id, expr));
@@ -4270,7 +4414,7 @@ static int is_declaration(void)
 {     if (t_delim(S_ARRAY) || t_delim(S_BOOLEAN) ||
           t_delim(S_INTEGER) || t_delim(S_OWN) ||
           t_delim(S_PROCEDURE) || t_delim(S_REAL) ||
-          t_delim(S_SWITCH)) return 1;
+          t_delim(S_SWITCH) || t_delim(S_LONG)) return 1;
       return 0;
 }
 
@@ -4384,6 +4528,9 @@ static void type_declaration(int flags)
                   id->name, id->block->seqn);
             else if (flags & F_INT)
                append(emit, "static int %s_%d = 0;\n\n",
+                  id->name, id->block->seqn);
+            else if (flags & F_LONG)
+               append(emit, "static int64_t %s_%d = 0;\n\n",
                   id->name, id->block->seqn);
             else if (flags & F_BOOL)
                append(emit, "static bool %s_%d = false;\n\n",
@@ -4527,7 +4674,7 @@ loop: /* parse the current array segment */
          append(code, "      dsa_%d->%s_%d = " a_alloc_array,
             current_level(), id[n]->name, id[n]->block->seqn);
       append(code, "('%s', ?, ",
-         (flags & F_REAL) ? "r" : (flags & F_INT) ? "i" : "b");
+         (flags & F_REAL) ? "r" : (flags & F_INT) ? "i" : (flags & F_LONG) ? "s" : "b");
       if (second_pass)
       {  /* remember place to substitute array dimension */
          place = strchr(code->tail->str, '?');
@@ -4545,8 +4692,8 @@ loop: /* parse the current array segment */
          dim++;
          bound = flags & F_OWN ? own_bound() : expression();
          if (second_pass)
-         {  if (bound->type == F_REAL) to_int(bound);
-            if (bound->type != F_INT)
+         {  if (bound->type == F_REAL) real_to_int(bound);
+            if (!(bound->type == F_INT || bound->type == F_LONG))
             {  error("bound expression is not of arithmetic type");
                bound->type = F_INT;
             }
@@ -4560,8 +4707,8 @@ loop: /* parse the current array segment */
          get_token(/* : */);
          bound = flags & F_OWN ? own_bound() : expression();
          if (second_pass)
-         {  if (bound->type == F_REAL) to_int(bound);
-            if (bound->type != F_INT)
+         {  if (bound->type == F_REAL) real_to_int(bound);
+            if (!(bound->type == F_INT || bound->type == F_LONG))
             {  error("bound expression is not of arithmetic type");
                bound->type = F_INT;
             }
@@ -4594,7 +4741,7 @@ loop: /* parse the current array segment */
             append(code, "      dsa_%d->%s_%d = " a_alloc_same,
                current_level(), id[n]->name, id[n]->block->seqn);
          append(code, "('%s', ",
-            (flags & F_REAL) ? "r" : (flags & F_INT) ? "i" : "b");
+            (flags & F_REAL) ? "r" : (flags & F_INT) ? "i" : (flags & F_LONG) ? "s" : "b");
          if (flags & F_OWN)
             append(code, "%s_%d);\n",
                id[n+1]->name, id[n+1]->block->seqn);
@@ -4740,6 +4887,7 @@ static void emit_proc_head(IDENT *proc, int flag)
             proc->block->seqn == 0 ? "precompiled" : "local",
             proc->flags & F_REAL   ? "real" :
             proc->flags & F_INT    ? "integer" :
+            proc->flags & F_LONG   ? "long" :
             proc->flags & F_BOOL   ? "Boolean" : "void");
       if (proc->dim == 0)
       {  append(emit, " (void)");
@@ -4757,6 +4905,7 @@ static void emit_proc_head(IDENT *proc, int flag)
          if (id->flags & F_BYNAME)  append(emit, " by name");
          if (id->flags & F_REAL)    append(emit, " real");
          if (id->flags & F_INT)     append(emit, " integer");
+         if (id->flags & F_LONG)    append(emit, " long");
          if (id->flags & F_BOOL)    append(emit, " Boolean");
          if (id->flags & F_LABEL)   append(emit, " label");
          if (id->flags & F_ARRAY)   append(emit, " array");
@@ -4940,14 +5089,13 @@ valp: {  for (;;)
       while (t_delim(S_ARRAY) || t_delim(S_BOOLEAN) ||
          t_delim(S_INTEGER) || t_delim(S_LABEL) ||
          t_delim(S_PROCEDURE) || t_delim(S_REAL) ||
-         t_delim(S_STRING) || t_delim(S_SWITCH))
+         t_delim(S_STRING) || t_delim(S_SWITCH) ||
+         t_delim(S_LONG))
       {  int flags;
-         if (t_delim(S_REAL) || t_delim(S_INTEGER) ||
-            t_delim(S_BOOLEAN))
+         if (t_delim(S_REAL) || t_delim(S_INTEGER) || t_delim(S_LONG) || t_delim(S_BOOLEAN))
          {  /* simple parameter, array, or procedure */
-            flags = t_delim(S_REAL) ? F_REAL : t_delim(S_INTEGER) ?
-               F_INT : F_BOOL;
-            get_token(/* real, inteter, Boolean */);
+            flags = t_delim(S_REAL) ? F_REAL : t_delim(S_INTEGER) ? F_INT : t_delim(S_LONG) ? F_LONG : F_BOOL;
+            get_token(/* real, integer, long, Boolean */);
             if (t_delim(S_ARRAY))
                flags |= F_ARRAY, get_token(/* array */);
             else if (t_delim(S_PROCEDURE))
@@ -5116,6 +5264,8 @@ skip: /* now the number of formal parameters is known */
                   /* real simple parameter called by value */
                case F_INT | F_BYVAL:
                   /* integer simple parameter called by value */
+               case F_LONG | F_BYVAL:
+                  /* long simple parameter called by value */
                case F_BOOL | F_BYVAL:
                   /* Boolean simple parameter called by value */
                case F_LABEL | F_BYVAL:
@@ -5127,6 +5277,7 @@ skip: /* now the number of formal parameters is known */
                      "1)()));\n", id->name, current->seqn,
                      (id->flags & F_REAL)  ? "get_real"  :
                      (id->flags & F_INT)   ? "get_int"   :
+                     (id->flags & F_LONG)  ? "get_long"  :
                      (id->flags & F_BOOL)  ? "get_bool"  :
                      (id->flags & F_LABEL) ? "get_label" : "???",
                      id->name, current->seqn,
@@ -5136,6 +5287,8 @@ skip: /* now the number of formal parameters is known */
                   /* real formal array called by value */
                case F_INT | F_ARRAY | F_BYVAL:
                   /* integer formal array called by value */
+               case F_LONG | F_ARRAY | F_BYVAL:
+                  /* long formal array called by value */
                case F_BOOL | F_ARRAY | F_BYVAL:
                   /* Boolean formal array called by value */
                   append(code, "      my_dsa.line = %d;\n",
@@ -5144,6 +5297,7 @@ skip: /* now the number of formal parameters is known */
                      id->name, current->seqn,
                      (id->flags & F_REAL) ? a_copy_real :
                      (id->flags & F_INT)  ? a_copy_int  :
+                     (id->flags & F_LONG) ? a_copy_long :
                      (id->flags & F_BOOL) ? a_copy_bool : "???",
                      id->name, current->seqn);
                   break;
@@ -5151,6 +5305,8 @@ skip: /* now the number of formal parameters is known */
                   /* real simple parameter called by name */
                case F_INT | F_BYNAME:
                   /* integer simple parameter called by name */
+               case F_LONG | F_BYNAME:
+                  /* long simple parameter called by name */
                case F_BOOL | F_BYNAME:
                   /* Boolean simple parameter called by name */
                case F_LABEL | F_BYNAME:
@@ -5161,6 +5317,8 @@ skip: /* now the number of formal parameters is known */
                   /* formal real procedure */
                case F_INT | F_PROC | F_BYNAME:
                   /* formal integer procedure */
+               case F_LONG | F_PROC | F_BYNAME:
+                  /* formal long procedure */
                case F_BOOL | F_PROC | F_BYNAME:
                   /* formal Boolean procedure */
                case F_PROC | F_BYNAME:
@@ -5172,6 +5330,8 @@ skip: /* now the number of formal parameters is known */
                   /* formal real array called by name */
                case F_INT | F_ARRAY | F_BYNAME:
                   /* formal integer array called by name */
+               case F_LONG | F_ARRAY | F_BYNAME:
+                  /* formal long array called by name */
                case F_BOOL | F_ARRAY | F_BYNAME:
                   /* formal Boolean array called by name */
                case F_STRING | F_BYNAME:
@@ -5206,12 +5366,15 @@ skip: /* now the number of formal parameters is known */
       /* generate code to return from the current procedure */
       if (second_pass)
       {  append(code, "      my_dsa.retval.lval = 0;\n");
-         switch (proc->flags & (F_REAL | F_INT | F_BOOL))
+         switch (proc->flags & (F_REAL | F_INT | F_LONG | F_BOOL))
          {  case F_REAL:
                append(code, "      my_dsa.retval.type = 'r';\n");
                break;
             case F_INT:
                append(code, "      my_dsa.retval.type = 'i';\n");
+               break;
+            case F_LONG:
+               append(code, "      my_dsa.retval.type = 's';\n");
                break;
             case F_BOOL:
                append(code, "      my_dsa.retval.type = 'b';\n");
@@ -5262,10 +5425,9 @@ static CODE *declaration(void)
       int flags;
       /* the current token must be declarator */
       assert(is_declaration());
-      if (t_delim(S_REAL) || t_delim(S_INTEGER) || t_delim(S_BOOLEAN))
-      {  flags = t_delim(S_REAL) ? F_REAL : t_delim(S_INTEGER) ? F_INT :
-            F_BOOL;
-         get_token(/* real, integer, Boolean */);
+      if (t_delim(S_REAL) || t_delim(S_INTEGER) || t_delim(S_LONG) || t_delim(S_BOOLEAN))
+      {  flags = t_delim(S_REAL) ? F_REAL : t_delim(S_INTEGER) ? F_INT : t_delim(S_LONG) ? F_LONG : F_BOOL;
+         get_token(/* real, integer, long, Boolean */);
          if (t_delim(S_ARRAY))
             flags |= F_ARRAY, get_token(/* array */);
          else if (t_delim(S_PROCEDURE))
@@ -5279,6 +5441,8 @@ static CODE *declaration(void)
             flags |= F_REAL, get_token(/* real */);
          else if (t_delim(S_INTEGER))
             flags |= F_INT, get_token(/* integer */);
+         else if (t_delim(S_LONG))
+            flags |= F_LONG, get_token(/* long */);
          else if (t_delim(S_BOOLEAN))
             flags |= F_BOOL, get_token(/* Boolean */);
          if (t_delim(S_ARRAY))
@@ -5724,6 +5888,8 @@ static int entire_module(void)
                flags = F_REAL, get_token(/* real */);
             else if (t_delim(S_INTEGER))
                flags = F_INT, get_token(/* integer */);
+            else if (t_delim(S_LONG))
+               flags = F_LONG, get_token(/* long */);
             else if (t_delim(S_BOOLEAN))
                flags = F_BOOL, get_token(/* Boolean */);
             else
@@ -5795,6 +5961,12 @@ static void emit_decl_code(IDENT *id)
             /* integer simple formal parameter called by value */
             append(emit, "      int %s_%d;\n", id->name, seqn);
             break;
+         case F_LONG:
+            /* local integer simple variable */
+         case F_LONG| F_BYVAL:
+            /* integer simple formal parameter called by value */
+            append(emit, "      int64_t %s_%d;\n", id->name, seqn);
+            break;
          case F_BOOL:
             /* local Boolean simple variable */
          case F_BOOL | F_BYVAL:
@@ -5817,6 +5989,12 @@ static void emit_decl_code(IDENT *id)
             /* formal integer array called by value */
          case F_INT | F_ARRAY | F_BYNAME:
             /* formal integer array called by name */
+         case F_LONG | F_ARRAY:
+            /* local integer array */
+         case F_LONG | F_ARRAY | F_BYVAL:
+            /* formal integer array called by value */
+         case F_LONG | F_ARRAY | F_BYNAME:
+            /* formal integer array called by name */
          case F_BOOL | F_ARRAY:
             /* local Boolean array */
          case F_BOOL | F_ARRAY | F_BYVAL:
@@ -5829,6 +6007,8 @@ static void emit_decl_code(IDENT *id)
             /* real simple formal parameter called by name */
          case F_INT | F_BYNAME:
             /* integer simple formal parameter called by name */
+         case F_LONG | F_BYNAME:
+            /* long simple formal parameter called by name */
          case F_BOOL | F_BYNAME:
             /* Boolean simple formal parameter called by name */
          case F_LABEL | F_BYNAME:
@@ -5839,6 +6019,8 @@ static void emit_decl_code(IDENT *id)
             /* formal real procedure */
          case F_INT | F_PROC | F_BYNAME:
             /* formal integer procedure */
+         case F_LONG | F_PROC | F_BYNAME:
+            /* formal long procedure */
          case F_BOOL | F_PROC | F_BYNAME:
             /* formal Boolean procedure */
          case F_PROC | F_BYNAME:
@@ -5853,12 +6035,16 @@ static void emit_decl_code(IDENT *id)
             /* own real simple variable */
          case F_INT | F_OWN:
             /* own integer simple variable */
+         case F_LONG | F_OWN:
+            /* own long simple variable */
          case F_BOOL | F_OWN:
             /* own Boolean simple variable */
          case F_REAL | F_ARRAY | F_OWN:
             /* own real array */
          case F_INT | F_ARRAY | F_OWN:
             /* own integer array */
+         case F_LONG | F_ARRAY | F_OWN:
+            /* own long array */
          case F_BOOL | F_ARRAY | F_OWN:
             /* own Boolean array */
          case F_LABEL:
@@ -5869,6 +6055,8 @@ static void emit_decl_code(IDENT *id)
             /* local real procedure */
          case F_INT | F_PROC:
             /* local integer procedure */
+         case F_LONG | F_PROC:
+            /* local long procedure */
          case F_BOOL | F_PROC:
             /* local Boolean procedure */
          case F_PROC:
@@ -5962,6 +6150,7 @@ static void emit_dsa_code(void)
                if (id->flags & F_BYNAME)  append(emit, " by name");
                if (id->flags & F_REAL)    append(emit, " real");
                if (id->flags & F_INT)     append(emit, " integer");
+               if (id->flags & F_LONG)    append(emit, " long");
                if (id->flags & F_BOOL)    append(emit, " Boolean");
                if (id->flags & F_LABEL)   append(emit, " label");
                if (id->flags & F_ARRAY)   append(emit, " array");
