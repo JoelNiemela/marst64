@@ -159,7 +159,7 @@ procedure outinteger(channel, int);
 procedure inlong(channel, val);
    value channel;
    integer channel; long val;
-   comment re takes the value of a number read from channel;
+   comment val takes the value of a number read from channel;
    begin
    long read;
    inline("my_dsa.read_44 = inlong(my_dsa.channel_42);");
@@ -171,7 +171,7 @@ procedure outlong(channel, val);
    integer channel; long val;
    comment Passes to channel the characters representing the value of
    val, followed by a terminator;
-   inline("outlong(my_dsa.channel_45, my_dsa.re_45);");
+   inline("outlong(my_dsa.channel_45, my_dsa.val_45);");
 
 procedure inreal(channel, re);
    value channel;
