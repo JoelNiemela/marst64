@@ -1,3 +1,8 @@
+Marst64 is a fork of GNU MARST that adds 64-bit integer support via
+the new type `long`.
+
+---
+
 GNU MARST -- Algol-to-C Translator, Version 2.7
 
 Copyright (C) 2000, 2001, 2002, 2007, 2013 Free Software Foundation,
