@@ -1073,6 +1073,8 @@ struct CSQE
 #define a_print         "print"
 #define a_real2int      "real2int"
 #define a_real2long     "real2long"
+#define a_int2long      "int2long"
+#define a_long2int      "long2int"
 #define a_set_bool      "set_bool"
 #define a_set_int       "set_int"
 #define a_set_long      "set_long"
@@ -1413,6 +1415,38 @@ static void real_to_long(CODE *x)
       {  x->lval = 0;
          x->type = F_LONG;
          prepend(x, a_real2long "(");
+         append(x, ")");
+      }
+      return;
+}
+
+/*----------------------------------------------------------------------
+-- int_to_long - generate code to convert integer expression to long one.
+--
+-- This routine generates code to convert expression of integer type to
+-- expression of long type. */
+
+static void int_to_long(CODE *x)
+{     if (second_pass && x->type == F_INT)
+      {  x->lval = 0;
+         x->type = F_LONG;
+         prepend(x, a_int2long"(");
+         append(x, ")");
+      }
+      return;
+}
+
+/*----------------------------------------------------------------------
+-- long_to_int - generate code to convert long expression to integer one.
+--
+-- This routine generates code to convert expression of long type to
+-- expression of integer type. */
+
+static void long_to_int(CODE *x)
+{     if (second_pass && x->type == F_LONG)
+      {  x->lval = 0;
+         x->type = F_INT;
+         prepend(x, a_long2int"(");
          append(x, ")");
       }
       return;
@@ -3156,6 +3190,8 @@ static CODE *assignment_statement(int flag)
             if ((id->flags & F_REAL) && x->type != F_REAL) to_real(x);
             if ((id->flags & F_INT)  && x->type == F_REAL) real_to_int(x);
             if ((id->flags & F_LONG) && x->type == F_REAL) real_to_long(x);
+            if ((id->flags & F_INT)  && x->type == F_LONG) int_to_long(x);
+            if ((id->flags & F_LONG) && x->type == F_INT)  long_to_int(x);
             if ((id->flags & (F_REAL | F_INT | F_LONG | F_BOOL)) != x->type)
                error("type of identifier `%s' in left part of assignmen"
                   "t statement incompatible with type of assigned expre"
