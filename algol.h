@@ -26,6 +26,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <float.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <math.h>
 #include <setjmp.h>
@@ -205,6 +206,8 @@ extern void outchar(int channel, int c);
 extern void outstring(int channel, char *str);
 extern int ininteger(int channel);
 extern void outinteger(int channel, int val);
+extern int64_t inlong(int channel);
+extern void outlong(int channel, int64_t val);
 extern double inreal(int channel);
 extern void outreal(int channel, double val);
 

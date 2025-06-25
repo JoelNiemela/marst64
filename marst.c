@@ -5755,6 +5755,34 @@ static void resolving(void)
             arg->flags = F_INT | F_BYVAL;
             free_code(leave_block());
          }
+         else if (strcmp(id->name, "inlong") == 0)
+         {  id->ssn_decl = 0;
+            id->flags = F_PROC | F_BLTIN;
+            id->dim = 2;
+            free_code(enter_block(id, 1));
+            current->proc = id;
+            arg = look_up("channel", 0, 0);
+            arg->ssn_decl = arg->ssn_used = 1;
+            arg->flags = F_INT | F_BYVAL;
+            arg = look_up("val", 0, 0);
+            arg->ssn_decl = arg->ssn_used = 1;
+            arg->flags = F_LONG | F_BYNAME;
+            free_code(leave_block());
+         }
+         else if (strcmp(id->name, "outlong") == 0)
+         {  id->ssn_decl = 0;
+            id->flags = F_PROC | F_BLTIN;
+            id->dim = 2;
+            free_code(enter_block(id, 1));
+            current->proc = id;
+            arg = look_up("channel", 0, 0);
+            arg->ssn_decl = arg->ssn_used = 1;
+            arg->flags = F_INT | F_BYVAL;
+            arg = look_up("val", 0, 0);
+            arg->ssn_decl = arg->ssn_used = 1;
+            arg->flags = F_LONG | F_BYVAL;
+            free_code(leave_block());
+         }
          else if (strcmp(id->name, "inreal") == 0)
          {  id->ssn_decl = 0;
             id->flags = F_PROC | F_BLTIN;

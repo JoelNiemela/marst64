@@ -156,13 +156,30 @@ procedure outinteger(channel, int);
    int, followed by a terminator;
    inline("outinteger(my_dsa.channel_40, my_dsa.int_40);");
 
+procedure inlong(channel, val);
+   value channel;
+   integer channel; long val;
+   comment re takes the value of a number read from channel;
+   begin
+   long read;
+   inline("my_dsa.read_44 = inlong(my_dsa.channel_42);");
+   val := read
+   end inlong;
+
+procedure outlong(channel, val);
+   value channel, val;
+   integer channel; long val;
+   comment Passes to channel the characters representing the value of
+   val, followed by a terminator;
+   inline("outlong(my_dsa.channel_45, my_dsa.re_45);");
+
 procedure inreal(channel, re);
    value channel;
    integer channel; real re;
    comment re takes the value of a number read from channel;
    begin
    real val;
-   inline("my_dsa.val_44 = inreal(my_dsa.channel_42);");
+   inline("my_dsa.val_49 = inreal(my_dsa.channel_47);");
    re := val
    end inreal;
 
@@ -171,7 +188,7 @@ procedure outreal(channel, re);
    integer channel; real re;
    comment Passes to channel the characters representing the value of
    re, followed by a terminator;
-   inline("outreal(my_dsa.channel_45, my_dsa.re_45);");
+   inline("outreal(my_dsa.channel_50, my_dsa.re_50);");
 
 comment Environmental enquiries;
 

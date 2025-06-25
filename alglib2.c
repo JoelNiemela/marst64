@@ -20,6 +20,7 @@
 ----------------------------------------------------------------------*/
 
 #include "algol.h"
+#include <stdlib.h>
 
 struct mem *stack_top = NULL;
 struct dsa *active_dsa = NULL;
@@ -935,6 +936,28 @@ void outinteger(int channel, int val)
 {     /* writes quantity of integer type to channel */
       connect(channel, 'w');
       fprintf(stream[channel], "%d ", val);
+      return;
+}
+
+/*--------------------------------------------------------------------*/
+
+int64_t inlong(int channel)
+{     /* reads quantity of integer type from channel */
+      int64_t x;
+      char *str, *ptr;
+      str = input_data(channel);
+      x = strtoll(str, &ptr, 10);
+      if (*ptr != '\0')
+         fault("unable to convert `%s' to long number", str);
+      return x;
+}
+
+/*--------------------------------------------------------------------*/
+
+void outlong(int channel, int64_t val)
+{     /* writes quantity of integer type to channel */
+      connect(channel, 'w');
+      fprintf(stream[channel], "%" PRId64 " ", val);
       return;
 }
 
